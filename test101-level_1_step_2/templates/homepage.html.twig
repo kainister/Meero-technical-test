@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <title>POC InterventionArea</title>
+        <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+        <style>
+            html,
+            body {
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+
+            #map {
+                height: 450px;
+            }
+
+            .delete-menu {
+                position: absolute;
+                background: white;
+                padding: 3px;
+                color: #666;
+                font-weight: bold;
+                border: 1px solid #999;
+                font-family: sans-serif;
+                font-size: 12px;
+                box-shadow: 1px 3px 3px rgba(0, 0, 0, .3);
+                margin-top: -10px;
+                margin-left: 10px;
+                cursor: pointer;
+            }
+
+            .delete-menu:hover {
+                background: #eee;
+            }
+        </style>
+    </head>
+    <body>
+    <div id="map"></div>
+
+    <div class="container mt-5 mb-1">
+        
+        {# <form class="d-flex" id="form" methods="get">
+            <input id="uuid" type="text" name="uuid" placeholder="Search by uuid"/>
+            <button class="btn btn-primary" type="submit">SEARCH</button>
+        </form> #}
+
+        <button class="btn btn-primary mt-1 mb-5" id="create">CREATE</button>
+    </div>
+
+    <div class="container mt-1 mb-5">
+        <div id="area_list"></div>
+    </div>
+
+    <script>
+
+        var Api = function () {
+
+        };
+
+        Api.prototype.query =function(criteria, callback)
+        {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', "{{ path('api_area_query') }}", true);
+            xhr.responseType = 'json';
+            xhr.setRequestHeader("Content-Type", "application/json; charset=utf-8");
+            xhr.onreadystatechange = function() {
+                if (this.readyState === XMLHttpRequest.DONE ) {
+                    console.log(this.status);
+                    if(null !== xhr.response) {
+                        if(callback!==undefined){
+                            callback(xhr.response);
+                        }
+                    }
+                }
+            }
+            xhr.send(criteria);
+        };
+
+        Api.prototype.remove =function(uuid,callback)
+        {
+            var xhr = new XMLHttpRequest();
+            xhr.open('DELETE', '{{ app.request.scheme ~'://' ~ app.request.httpHost ~ path('api_area_remove') }}?uuid='+uuid, true);
+            xhr.responseType = 'json';
+            xhr.setRequestHeader("Content-Type", "application/json; charset=utf-8");
+            xhr.onreadystatechange = function() {
+                if (this.readyState === XMLHttpRequest.DONE ) {
+                    if(callback!==undefined && xhr.response !== null){
+                        callback(xhr.response);
+                    }
+                }
+            }
+            xhr.send();
+        };
+
+        Api.prototype.save =function(area,callback)
+        {
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '{{ app.request.scheme ~"://" ~ app.request.httpHost ~ path('api_area_remove') }}', true);
+            xhr.responseType = 'json';
+            xhr.setRequestHeader("Content-Type", "application/json; charset=utf-8");
+            xhr.onreadystatechange = function() {
+                if (this.readyState === XMLHttpRequest.DONE ) {
+                    if(callback!==undefined && xhr.response !== null){
+                        callback(xhr.response);
+                    }
+                }
+            }
+
+            xhr.send(JSON.stringify(area));
+        };
+
+        var map, area = null;
+
+        ///
+        function initMap() {
+            map = new google.maps.Map(
+
+            document.getElementById('map'),
+            {
+                zoom: 15,
+                center: {lat: 48.846659, lng: 2.3808097},
+                mapTypeId: 'terrain'
+            });
+
+            function DeleteMenu() {
+                this.div_ = document.createElement('div');
+                this.div_.className = 'delete-menu';
+                this.div_.innerHTML = 'Delete';
+
+                var menu = this;
+                google.maps.event.addDomListener(this.div_, 'click', function() {
+                    menu.removeVertex();
+                });
+            }
+
+            DeleteMenu.prototype = new google.maps.OverlayView();
+
+            DeleteMenu.prototype.onAdd = function() {
+                var deleteMenu = this;
+                var map = this.getMap();
+                this.getPanes().floatPane.appendChild(this.div_);
+
+                this.divListener_ = google.maps.event.addDomListener(map.getDiv(), 'mousedown', function(e) {
+                    if (e.target != deleteMenu.div_) {
+                        deleteMenu.close();
+                    }
+                }, true);
+            };
+
+            DeleteMenu.prototype.onRemove = function() {
+                google.maps.event.removeListener(this.divListener_);
+                this.div_.parentNode.removeChild(this.div_);
+
+                this.set('position');
+                this.set('path');
+                this.set('vertex');
+            };
+
+            DeleteMenu.prototype.close = function() {
+                this.setMap(null);
+            };
+
+            DeleteMenu.prototype.draw = function() {
+                var position = this.get('position');
+                var projection = this.getProjection();
+
+                if (!position || !projection) {
+                    return;
+                }
+
+                var point = projection.fromLatLngToDivPixel(position);
+                this.div_.style.top = point.y + 'px';
+                this.div_.style.left = point.x + 'px';
+            };
+
+            DeleteMenu.prototype.open = function(map, path, vertex) {
+                this.set('position', path.getAt(vertex));
+                this.set('path', path);
+                this.set('vertex', vertex);
+                this.setMap(map);
+                this.draw();
+            };
+
+            DeleteMenu.prototype.removeVertex = function() {
+                var path = this.get('path');
+                var vertex = this.get('vertex');
+
+                if (!path || vertex == undefined) {
+                    this.close();
+                    return;
+                }
+
+                path.removeAt(vertex);
+                this.close();
+            };
+
+            var deleteMenu = new DeleteMenu();
+        }
+
+        function displayQuery(data) {
+            var currentDiv = document.getElementById("area_list");
+            currentDiv.innerHTML = '';
+            data.forEach(function(item){
+                var newDiv = document.createElement("div");
+                var newCol = document.createElement("div");
+                var newContent = document.createTextNode(item.uuid);
+                var newARemove = document.createElement("a");
+                newDiv.classList.add('row');
+                newCol.classList.add('col-12');
+                newDiv.classList.add('d-flex');
+                newDiv.classList.add('align-items-center');
+                newARemove.classList.add('btn');
+                newARemove.classList.add('btn-danger');
+                newARemove.classList.add('m-1');
+                newARemove.setAttribute('data-uuid',item.uuid);
+                newARemove.innerHTML = 'REMOVE';
+                newARemove.href ='#remove';
+                newARemove.onclick = function(){
+                    var uuid = this.getAttribute('data-uuid');
+                    api.remove(uuid, function() {
+                        api.query([], displayQuery);
+                    });
+                };
+
+                var newADisplay = document.createElement("a");
+                newADisplay.classList.add('btn');
+                newADisplay.classList.add('btn-success');
+                newADisplay.setAttribute('data-polygon',JSON.stringify(item.polygon));
+                newADisplay.setAttribute('data-uuid',item.uuid);
+                newADisplay.innerHTML = 'DISPLAY';
+                newADisplay.href ='#display';
+                newADisplay.onclick = function(){
+                    if (area !== null) {
+                        area.setMap(null);
+                    }
+
+                    var polygon = JSON.parse(this.getAttribute('data-polygon'));
+                    area = new google.maps.Polygon({
+                        paths: polygon,
+                        strokeColor: '#FF0000',
+                        strokeOpacity: 0.8,
+                        strokeWeight: 2,
+                        fillColor: '#FF0000',
+                        fillOpacity: 0.35,
+                        editable: true
+                    });
+                    area.setMap(map);
+
+                    var bounds = new google.maps.LatLngBounds();
+
+                    polygon.forEach(function(element) {
+                        bounds.extend(element);
+                    });
+
+                    map.setCenter(bounds.getCenter());
+                };
+
+                newDiv.appendChild(newCol);
+                newCol.appendChild(newADisplay);
+                newCol.appendChild(newARemove);
+                newCol.appendChild(newContent);
+                currentDiv.appendChild(newDiv);
+            });
+        }
+
+        var api = new Api();
+
+        api.query([],displayQuery);
+
+        var form = document.getElementById('form');
+        var create = document.getElementById('create');
+        var input = document.getElementById('uuid');
+
+        // form.addEventListener('submit', function() {
+        //     var uuid = input.value;
+
+        //     api.query({ uuid: uuid });
+        // });
+        
+        let status = 0;
+
+        create.addEventListener('click', function() {
+            console.log(typeof status, status === 0)
+            if (0 === status) {
+                            console.log(status, !status)
+                status = 1;
+                create.innerHTML = 'SAVE';
+                if (area !== null) {
+                    area.setMap(null);
+                    area = null;
+                }
+
+                var polygon = [
+                    {lat: 48.846658, lng: 2.3808096},
+                    {lat: 48.849670, lng: 2.3808098},
+                ];
+                area = new google.maps.Polygon({
+                    paths: polygon,
+                    strokeColor: '#FF0000',
+                    strokeOpacity: 0.8,
+                    strokeWeight: 2,
+                    fillColor: '#FF0000',
+                    fillOpacity: 0.35,
+                    editable: true
+                });
+                area.setMap(map);
+
+                var bounds = new google.maps.LatLngBounds();
+
+                polygon.forEach(function(element) {
+                    bounds.extend(element);
+                });
+
+                map.setCenter(bounds.getCenter());
+            } else {
+                console.log('TTTTTT')
+                status = 0;
+                var areaLatLngs = area.latLngs.g[0].g
+                var data = {
+                    polygon: areaLatLngs,
+                };
+
+                api.save(data, function() {
+                    create.innerHTML = 'CREATE';
+                    api.query([], displayQuery);
+                    area.setMap(null);
+                    area = null;
+                });
+            }
+        });
+    </script>
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCx2XeevaZnfQcRV8qd4iwSJu8KMQxmLF0&callback=initMap"></script>
+    </body>
+</html>
